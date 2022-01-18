@@ -5,6 +5,8 @@
 #warning F_CPU is not defined!
 #endif
 
+#include "stm8s.h"
+
 /* 
  * Func delayed N cycles, where N = 3 + ( ticks * 3 )
  * so, ticks = ( N - 3 ) / 3, minimum delay is 6 CLK

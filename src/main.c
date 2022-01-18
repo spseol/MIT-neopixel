@@ -1,54 +1,87 @@
 #include "stm8s.h"
 #include "milis.h"
 
-/*#include "delay.h"*/
+#include "delay.h"
 #include <stdio.h>
-/*#include "uart1.h"*/
 
 #define _ISOC99_SOURCE
 #define _GNU_SOURCE
 
-#define LED_PORT GPIOC
-#define LED_PIN  GPIO_PIN_5
-#define LED_HIGH   GPIO_WriteHigh(LED_PORT, LED_PIN)
-#define LED_LOW  GPIO_WriteLow(LED_PORT, LED_PIN)
-#define LED_REVERSE GPIO_WriteReverse(LED_PORT, LED_PIN)
 
-#define BTN_PORT GPIOE
-#define BTN_PIN  GPIO_PIN_4
-#define BTN_PUSH (GPIO_ReadInputPin(BTN_PORT, BTN_PIN)==RESET) 
-
-
-void setup(void)
+void init_spi(void)
 {
-    CLK_HSIPrescalerConfig(CLK_PRESCALER_HSIDIV1);      // taktovani MCU na 16MHz
-    GPIO_Init(LED_PORT, LED_PIN, GPIO_MODE_OUT_PP_LOW_SLOW);
-    GPIO_Init(BTN_PORT, BTN_PIN, GPIO_MODE_IN_FL_NO_IT);
-
-    init_milis();
-    /*init_uart1();*/
+    // Software slave managment (disable CS/SS input), BiDirectional-Mode release MISO pin to general purpose
+    SPI->CR2 |= SPI_CR2_SSM | SPI_CR2_SSI | SPI_CR2_BDM | SPI_CR2_BDOE;
+    // Enable SPI as master at maximum speed (F_MCU/2, there 16/2=8MHz)
+    SPI->CR1 |= SPI_CR1_SPE | SPI_CR1_MSTR;
 }
 
 
+#define L_PATTERN 0b01110000    // 3x125ns (8MHZ SPI)
+#define H_PATTERN 0b01111100    // 5x125ns (8MHZ SPI), first and last bit must be zero (to remain MOSI in Low between frames/bits)
+// takes array of LED_number * 3 bytes (RGB per LED)
+
+void neopixel(uint8_t * data, uint16_t length)
+{
+    uint8_t mask;
+    disableInterrupts();        // can be omitted if interrupts do not take more then about ~25us
+    while(length--) {            // for all bytes from input array
+        mask = 0b10000000;     // for all bits in byte
+        while (mask) {
+            while (!(SPI->SR & SPI_SR_TXE));    // wait for empty SPI buffer
+            if (mask & data[length]) {  // send pulse with coresponding length ("L" od "H")
+                SPI->DR = H_PATTERN;
+            } else {
+                SPI->DR = L_PATTERN;
+            }
+            mask = mask >> 1;
+        }
+    }
+    enableInterrupts();
+    while (SPI->SR & SPI_SR_BSY); // wait until end of transfer - there should come "reset" (>50us in Low)
+}
+
+
+// test pattern for (16 RGB LED ring)
+uint8_t colors[32] = {
+    0x00, 0x00, 0x0f,           // 
+    0xff, 0x00, 0x00,           // B
+    0x00, 0xff, 0x00,           // R
+    0x00, 0x00, 0xff,           // G
+    0x05, 0x05, 0x05,           // black
+    0x2f, 0x2f, 0x2f,           // light white
+    0x0f, 0x0f, 0x0f,            // light white
+    0x0f, 0x00, 0x00,           // B
+    0x00, 0x0f, 0x00,           // B
+
+    0x00, 0x0f, 0x0f,           // B
+};
+
+void my_delay_ms(uint16_t ms) {
+    uint16_t  i;
+    for (i=0; i<ms; i = i+1){
+        _delay_us(250);
+        _delay_us(248);
+        _delay_us(250);
+        _delay_us(250);
+    }
+}
+
 int main(void)
 {
-    uint32_t time = 0;
+    CLK_HSIPrescalerConfig(CLK_PRESCALER_HSIDIV1);
+    init_spi();
 
-    setup();
+        neopixel(colors, sizeof(colors));
+        my_delay_ms(2);
 
     while (1) {
 
-        if (milis() - time > 333 && BTN_PUSH) {
-            LED_REVERSE; 
-            time = milis();
-            /*printf("%ld\n", time);*/
-        }
 
-        /*LED_REVERSE; */
-        /*_delay_ms(333);*/
-        /*printf("Funguje to!!!\n");*/
+        colors[1]++;
+
     }
 }
 
 /*-------------------------------  Assert -----------------------------------*/
-#include "__assert__.h"
+/*#include "__assert__.h"*/
